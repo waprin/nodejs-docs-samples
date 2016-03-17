@@ -23,39 +23,20 @@
 var google = require('googleapis');
 var async = require('async');
 
-var args = process.argv.slice(2);
-if (args.length !== 1) {
-    console.log('Usage: node auth_and_list_env.js <project_id>');
-    process.exit();
-}
 
 var monitoringScopes = [
-    'https://www.googleapis.com/auth/cloud-platform',
-    'https://www.googleapis.com/auth/monitoring',
-    'https://www.googleapis.com/auth/monitoring.read',
-    'https://www.googleapis.com/auth/monitoring.write'
+  'https://www.googleapis.com/auth/cloud-platform',
+  'https://www.googleapis.com/auth/monitoring',
+  'https://www.googleapis.com/auth/monitoring.read',
+  'https://www.googleapis.com/auth/monitoring.write'
 ];
-
-
-/** The project resource created from the project ID */
-var PROJECT_RESOURCE = 'projects/' + args[0];
-
-/** This domain should be used for all custom metrics. */
-var CUSTOM_METRIC_DOMAIN = 'custom.googleapis.com';
-
-/** This is the type of the custom metric */
-var CUSTOM_METRIC_TYPE = CUSTOM_METRIC_DOMAIN + '/custom_measurement';
-
-/** This is the name of the custom metric */
-var CUSTOM_METRIC_NAME = PROJECT_RESOURCE + '/metricDescriptors/' +
-    CUSTOM_METRIC_TYPE;
 
 /**
  * Returns the current timestamp in RFC33339 with milliseconds format.
  */
 function getNow() {
-    var d = new Date();
-    return JSON.parse(JSON.stringify(d).replace('Z', '000Z'));
+  var d = new Date();
+  return JSON.parse(JSON.stringify(d).replace('Z', '000Z'));
 }
 
 /**
@@ -63,19 +44,24 @@ function getNow() {
  * to start the window to view the metric written in.
  */
 function getStartTime() {
-    var d = new Date();
-    d.setHours(d.getHours() - 1);
-    return JSON.parse(JSON.stringify(d).replace('Z', '000Z'));
+  var d = new Date();
+  d.setHours(d.getHours() - 1);
+  return JSON.parse(JSON.stringify(d).replace('Z', '000Z'));
 }
+
+var CUSTOM_METRIC_DOMAIN = 'custom.googleapis.com';
 
 /**
- * Gets random integer between low and high (exclusive). Used to fill in
- * a random value for the measurement.
+ * Constructor function. The CustomMetrics class stores the type of metric
+ * in its instance class allowing unique ones to be used in tests.
  */
-function getRandomInt(low, high) {
-    return Math.floor(Math.random() * (high - low) + low);
+function CustomMetrics(projectName, metricType) {
+  this.projectResource = 'projects/' + projectName;
+  this.metricType = CUSTOM_METRIC_DOMAIN + '/' + metricType;
+  this.metricName = this.projectResource +
+    '/metricDescriptors/' + this.metricType;
+  this.valueOverride = false;
 }
-
 
 /**
  * Creates a custo metric. For demonstration purposes, this is a hypothetical
@@ -85,38 +71,37 @@ function getRandomInt(low, high) {
  * @param projectId
  * @param callback
  */
-function createCustomMetric(authClient, projectResource, callback) {
-    var monitoring = google.monitoring('v3');
+CustomMetrics.prototype.createCustomMetric = function(client, callback) {
 
-    monitoring.projects.metricDescriptors.create({
-        auth: authClient,
-        name: projectResource,
-        resource: {
-            name: CUSTOM_METRIC_NAME,
-            type: CUSTOM_METRIC_TYPE,
-            labels: [
-                {
-                    key: 'environment',
-                    valueType: 'STRING',
-                    description: 'An abritrary measurement'
-                }
-            ],
-            metricKind: 'GAUGE',
-            valueType: 'INT64',
-            unit: 'items',
-            description: 'An arbitrary measurement.',
-            displayName: 'Custom Metric'
+  var monitoring = google.monitoring('v3');
+
+  monitoring.projects.metricDescriptors.create({
+    auth: client,
+    name: this.projectResource,
+    resource: {
+      name: this.metricName,
+      type: this.metricType,
+      labels: [
+        {
+          key: 'environment',
+          valueType: 'STRING',
+          description: 'An abritrary measurement'
         }
-    }, function (error, customMetric) {
-        if (error) {
-            console.error('Error Creating Custom Metric', error);
-            return;
-        }
-        console.log('createCustomMetric: ');
-        console.log(customMetric);
-        callback();
-    });
-}
+      ],
+      metricKind: 'GAUGE',
+      valueType: 'INT64',
+      unit: 'items',
+      description: 'An arbitrary measurement.',
+      displayName: 'Custom Metric'
+    }
+  }, function(error, customMetric) {
+    if (error) {
+      console.error('Error Creating Custom Metric', error);
+      return;
+    }
+    callback(customMetric);
+  });
+};
 
 /**
  * Writes a time series value for the custom metric just created. It uses a
@@ -128,50 +113,49 @@ function createCustomMetric(authClient, projectResource, callback) {
  * @param projectResource The project resource created from the project ID
  * @param callback
  */
-function writeTimeSeriesForCustomMetric(client, projectResource, callback) {
+CustomMetrics.prototype.writeTimeSeriesForCustomMetric =
+  function(client, callback) {
     var monitoring = google.monitoring('v3');
     var now = getNow();
     monitoring.projects.timeSeries.create({
-        auth: client,
-        name: projectResource,
-        resource: {
-            timeSeries: [{
-                metric: {
-                    type: CUSTOM_METRIC_TYPE,
-                    labels: {
-                        environment: 'STAGING'
-                    }
-                },
-                resource: {
-                    type: 'gce_instance',
-                    labels: {
-                        instance_id: 'test_instance',
-                        zone: 'us-central1-f'
-                    }
-                },
-                metricKind: 'GAUGE',
-                valueType: 'INT64',
-                points: {
-                    interval: {
-                        startTime: now,
-                        endTime: now
-                    },
-                    value: {
-                        int64Value: getRandomInt(1, 20)
-                    }
-                }
-            }]
-        }
-    }, function (error, timeSeries) {
-        if (error) {
-            console.error('Error writing time series', error);
-            return;
-        }
-        console.log('timeSeries: ');
-        console.log(timeSeries);
-        callback();
+      auth: client,
+      name: this.projectResource,
+      resource: {
+        timeSeries: [{
+          metric: {
+            type: this.metricType,
+            labels: {
+              environment: 'STAGING'
+            }
+          },
+          resource: {
+            type: 'gce_instance',
+            labels: {
+              instance_id: 'test_instance',
+              zone: 'us-central1-f'
+            }
+          },
+          metricKind: 'GAUGE',
+          valueType: 'INT64',
+          points: {
+            interval: {
+              startTime: now,
+              endTime: now
+            },
+            value: {
+              int64Value: this.getRandomInt(1, 20)
+            }
+          }
+        }]
+      }
+    }, function(error, timeSeries) {
+      if (error) {
+        console.error('Error writing time series', error);
+        return;
+      }
+      callback(timeSeries);
     });
-}
+  };
 
 /**
  * Lists the time series written for the custom metric. The window
@@ -182,32 +166,45 @@ function writeTimeSeriesForCustomMetric(client, projectResource, callback) {
  * @param projectResource The project resource created from the project ID
  * @param callback
  */
-function listTimeSeries(client, projectResource, callback) {
-    var monitoring = google.monitoring('v3');
-    var startTime = getStartTime();
-    var endTime = getNow();
-    monitoring.projects.timeSeries.list({
-        auth: client,
-        name: projectResource,
-        filter: 'metric.type="' + CUSTOM_METRIC_TYPE + '"',
-        pageSize: 3,
-        'interval.startTime': startTime,
-        'interval.endTime': endTime
-    }, function (error, timeSeries) {
-        if (error) {
-            console.error('Error readTimeseries', error);
-            return;
-        }
-        console.log('readTimeseries ');
-        console.log(JSON.stringify(timeSeries));
-        callback();
-    });
-}
-
-google.auth.getApplicationDefault(function (error, authClient) {
+CustomMetrics.prototype.listTimeSeries = function(client, callback) {
+  var monitoring = google.monitoring('v3');
+  var startTime = getStartTime();
+  var endTime = getNow();
+  console.log('reading metric type', this.metricType);
+  monitoring.projects.timeSeries.list({
+    auth: client,
+    name: this.projectResource,
+    filter: 'metric.type="' + this.metricType + '"',
+    pageSize: 3,
+    'interval.startTime': startTime,
+    'interval.endTime': endTime
+  }, function(error, timeSeries) {
     if (error) {
-        console.error(error);
-        process.exit(1);
+      console.error('Error listTimeseries', error);
+      return;
+    }
+
+    callback(timeSeries);
+  });
+};
+
+/**
+ * Gets random integer between low and high (exclusive). Used to fill in
+ * a random value for the measurement.
+ * Tests always return 3;
+ */
+CustomMetrics.prototype.getRandomInt = function(low, high) {
+  if (this.valueOverride) {
+    return 3;
+  }
+  return Math.floor(Math.random() * (high - low) + low);
+};
+
+CustomMetrics.prototype.getMonitoringClient = function(callback) {
+  google.auth.getApplicationDefault(function(error, authClient) {
+    if (error) {
+      console.error(error);
+      process.exit(1);
     }
 
     // Depending on the environment that provides the default credentials
@@ -215,21 +212,48 @@ google.auth.getApplicationDefault(function (error, authClient) {
     // require you to specify the scopes you need explicitly.
     // Check for this case, and inject the Cloud Storage scope if required.
     if (authClient.createScopedRequired &&
-        authClient.createScopedRequired()) {
-        authClient = authClient.createScoped(monitoringScopes);
+      authClient.createScopedRequired()) {
+      authClient = authClient.createScoped(monitoringScopes);
     }
+    callback(authClient);
+  });
+};
 
+module.exports = CustomMetrics;
+
+function main() {
+  var args = process.argv.slice(2);
+  if (args.length !== 1) {
+    console.log('Usage: node auth_and_list_env.js <project_id>');
+    process.exit();
+  }
+
+  var customMetrics = new CustomMetrics(args[0], 'custom_measurement');
+
+  customMetrics.getMonitoringClient(function(authClient) {
     // Create the service object.
     async.series([
-        function (callback) {
-            createCustomMetric(authClient, PROJECT_RESOURCE, callback);
-        }, function (callback) {
-            writeTimeSeriesForCustomMetric(authClient,
-                PROJECT_RESOURCE, callback);
-        }, function (callback) {
-            // wait 2 seconds for the write to be received
-            setTimeout(function () {
-                listTimeSeries(authClient, PROJECT_RESOURCE, callback);
-            }, 2000);
-        }]);
-});
+      function(callback) {
+        customMetrics.createCustomMetric(authClient, function(customMetrics) {
+          console.log('createCustomMetric: ');
+          console.log(customMetrics);
+          callback();
+        });
+      }, function(callback) {
+        customMetrics.writeTimeSeriesForCustomMetric(authClient, callback);
+      }, function(callback) {
+        // wait 2 seconds for the write to be received
+        setTimeout(function() {
+          customMetrics.listTimeSeries(authClient, function(timeSeries) {
+            console.log('readTimeseries ');
+            console.log(JSON.stringify(timeSeries));
+            callback();
+          });
+        }, 2000);
+      }]);
+  });
+}
+
+if (require.main === module) {
+  main();
+}
